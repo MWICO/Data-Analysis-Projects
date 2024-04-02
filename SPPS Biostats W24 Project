@@ -1,0 +1,103 @@
+Title: "Winter 2024 Data Analysis Project"
+Course: "SPPS 208 - Study Design & Biostatistics II"
+Supervisors: "Dr. Mark Bounthavong & Dr. Zaid Yousif"
+Group: "11"
+R-Studio Version: "4.3.2"
+Data Set Used: "Sertraline"
+Research Question: Does using Sertraline for depression in the span of 12 weeks cause a statistically significant reduction of moderate and severe depression based on the Center of Epidemiological Studies-Depression (CES-D) in HIV-infected Africans in two Ugandan hospitals, 18-70 years old, compared to HIV-infected Africans in Uganda not on Sertraline?
+#-------------
+setwd("C:/Users/MarcVincent/Desktop/RStudio Winter24/Data Analysis Project")
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("openxlsx")
+library(openxlsx)
+install.packages("psych")
+library(psych)
+install.packages("gmodels")
+library(gmodels)
+install.packages("gtsummary")
+library(gtsummary)
+install.packages("dplyr")
+library("dplyr")
+install.packages("survminer")
+library("survminer")
+install.packages("survival")
+library("survival")
+  
+### Does patients taking Sertraline show a clinical reduction (-25%) in patients with severe depression (>= 26) when compared to patients taking placebo? ###
+
+### Setting Data Frame ###
+
+Sertraline_df <- openxlsx::read.xlsx('Sertraline.xlsx')
+view(Sertraline_df)
+ 
+### Data Modification ###
+
+Sertraline_numerical_df <- Sertraline_df[ which(Sertraline_df$study == 4 & Sertraline_df$stage == 2 & Sertraline_df$status == 4), ] #Remove NAs
+Sertraline_numerical_df <- Sertraline_df %>% select("cesd_4","cesd_12", "txgroup_txt","PID") #Selecting columns
+Sertraline_numerical_df<-Sertraline_numerical_df %>% filter(cesd_4 !="n/a", cesd_12 !="n/a", txgroup_txt !="n/a") #Filter out n/a values
+Sertraline_numerical_df$cesd_12 <- as.numeric(Sertraline_numerical_df$cesd_12) #Make data numeric
+Sertraline_numerical_df$cesd_4 <- as.numeric(Sertraline_numerical_df$cesd_4) #Make data numeric
+Sertraline_numerical_df$txgroup_txt <- as.factor(Sertraline_numerical_df$txgroup_txt) #set treatment group as a factor
+Sertraline_numerical_df$change <- (Sertraline_numerical_df$cesd_12 - Sertraline_numerical_df$cesd_4)/Sertraline_numerical_df$cesd_4 #Create Change column
+Sertraline_numerical_df$Outcome[Sertraline_numerical_df$change >= -.25] = 0 #Set limits >25% reduction in depression for logistical regression 0
+Sertraline_numerical_df$Outcome[Sertraline_numerical_df$change < -.25] = 1 #Set limits <25% reduction in depression for logistical regression 1
+summary(Sertraline_numerical_df) #review dataframe
+
+### Logistical Regression ###
+
+Sertraline_logit <- glm(Outcome ~ txgroup_txt, data = Sertraline_numerical_df, family = "binomial") #create logistic regression model
+summary(Sertraline_logit) #summary of model
+confint(Sertraline_logit) #generate confidence intervals
+round(exp(coef(Sertraline_logit)),3) #odds ratios only
+round(exp(cbind(OR = coef(Sertraline_logit), confint(Sertraline_logit))),3) #odds ratios and 95% CI
+
+
+### Does patients taking Sertraline have higher survival rates than patients that take placebo after 12 weeks? ###
+
+Sertraline_df <- openxlsx::read.xlsx('Sertraline.xlsx') #Set Dataframe
+view(Sertraline_df)
+
+### Data Modification ###
+Sertraline_Survival_df <- Sertraline_df %>% select("txgroup_txt","PID","t2death","death","age","sex") #Selecting columns
+Sertraline_Survival_df <-Sertraline_Survival_df %>% filter(txgroup_txt !="n/a",t2death != "n/a", death != "n/a") #filter n/a data
+
+names(Sertraline_Survival_df) #check column names
+Sertraline_Survival_df <- Sertraline_Survival_df %>% rename(Group = txgroup_txt, SurvivalTime = t2death) #Date Renaming
+
+Sertraline_Survival_df$SurvivalTime <- as.numeric(Sertraline_Survival_df$SurvivalTime) #change survivaltime to numeric for KM plot
+Sertraline_Survival_df$death <- as.numeric(Sertraline_Survival_df$death) #change death column to numeric for KM plot
+Sertraline_Survival_df$Group <- factor(Sertraline_Survival_df$Group) #change Group column to factor
+levels(Sertraline_Survival_df$Group) #Check order of levels
+levels(Sertraline_Survival_df$Group) <- c("1","2") #Assign levels: change placebo = 1; Sertraline = 2
+Sertraline_Survival_df$Group <- relevel(Sertraline_Survival_df$Group,ref = '1') #Set reference group to Placebo = 1
+
+### Prepare for KM PLOT ###
+
+class(Sertraline_Survival_df$death) #Check if numeric
+class(Sertraline_Survival_df$PID) #Check if numeric
+class(Sertraline_Survival_df$age) #Check if numeric
+class(Sertraline_Survival_df$sex) #Check if numeric
+class(Sertraline_Survival_df$Group) #Check if numeric
+Sertraline_Survival_df$death <- as.numeric(Sertraline_Survival_df$death) #change death column to numeric for KM plot
+Sertraline_Survival_df$Group <- as.numeric(Sertraline_Survival_df$Group) #change death column to numeric for KM plot
+
+view(Sertraline_Survival_df) # check dataframe
+
+
+### Run Kaplan-Meier Curves ###
+
+SS.plot <- survfit(Surv(SurvivalTime, death) ~ Group, data = Sertraline_Survival_df) #run survival plot
+ggsurvplot(SS.plot,
+           risk.table = TRUE,
+           legend.labs = c("Placebo", "Sertraline"),
+           title = "Kaplan-Meier curves")
+
+survdiff(Surv(SurvivalTime, death) ~ Group, data = Sertraline_Survival_df) #Log rank test for Chi-Square
+
+### Cox Proportional Hazards Model ###
+
+coxmodel <- coxph(Surv(SurvivalTime, death) ~ Group, data = Sertraline_Survival_df)
+coxmodel  ## Generates the log hazard ratio
+exp(coef(coxmodel)) ## Generates exp coefficients (or hazard ratio)
+exp(confint(coxmodel))
